@@ -4,6 +4,7 @@ app.use(express.json());
 
 let latest = {
   temperature: null,
+  humidity: null,
   power: null,
   energy: null,
   timestamp: null
@@ -18,10 +19,11 @@ app.post('/data', (req, res) => {
 
 // Public dashboard
 app.get('/', (req, res) => {
-  const temp  = latest.temperature ?? '—';
-  const power = latest.power      ?? '—';
-  const energy = latest.energy    ?? '—';
-  const time  = latest.timestamp  ?? 'Waiting for first reading...';
+  const temp     = latest.temperature ?? '—';
+  const humidity = latest.humidity    ?? '—';
+  const power    = latest.power       ?? '—';
+  const energy   = latest.energy      ?? '—';
+  const time     = latest.timestamp   ?? 'Waiting for first reading...';
 
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -33,7 +35,8 @@ app.get('/', (req, res) => {
   <style>
     body { font-family: sans-serif; max-width: 500px; margin: 60px auto; padding: 0 20px; color: #222; }
     h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 2rem; }
-    .card { background: #f5f5f5; border-radius: 10px; padding: 20px 24px; margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { background: #f5f5f5; border-radius: 10px; padding: 20px 24px; }
     .label { font-size: 0.85rem; color: #666; margin-bottom: 4px; }
     .value { font-size: 2.4rem; font-weight: 600; }
     .unit  { font-size: 1rem; color: #888; margin-left: 4px; }
@@ -42,17 +45,23 @@ app.get('/', (req, res) => {
 </head>
 <body>
   <h1>Shelly 1PM — Live Sensor Data</h1>
-  <div class="card">
-    <div class="label">Temperature</div>
-    <div class="value">${temp}<span class="unit">°C</span></div>
-  </div>
-  <div class="card">
-    <div class="label">Power</div>
-    <div class="value">${power}<span class="unit">W</span></div>
-  </div>
-  <div class="card">
-    <div class="label">Energy</div>
-    <div class="value">${energy}<span class="unit">Wh</span></div>
+  <div class="grid">
+    <div class="card">
+      <div class="label">Temperature</div>
+      <div class="value">${temp}<span class="unit">°C</span></div>
+    </div>
+    <div class="card">
+      <div class="label">Humidity</div>
+      <div class="value">${humidity}<span class="unit">%</span></div>
+    </div>
+    <div class="card">
+      <div class="label">Power</div>
+      <div class="value">${power}<span class="unit">W</span></div>
+    </div>
+    <div class="card">
+      <div class="label">Energy</div>
+      <div class="value">${energy}<span class="unit">Wh</span></div>
+    </div>
   </div>
   <p class="footer">Last updated: ${time} · refreshes every 30s</p>
 </body>
