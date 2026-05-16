@@ -11,14 +11,15 @@ let latest = {
   timestamp: null
 };
 
-let pendingCommand = null; // 'on', 'off', or null
+let pendingCommand = null;
+let desiredRelay = null;
 
 // Shelly posts sensor data and picks up any pending command
 app.post('/data', (req, res) => {
   console.log('Received:', req.body);
   latest = { ...req.body, timestamp: new Date().toLocaleString() };
   const cmd = pendingCommand;
-  pendingCommand = null; // clear after sending once
+  pendingCommand = null;
   res.json({ command: cmd });
 });
 
@@ -27,6 +28,7 @@ app.post('/command', (req, res) => {
   const { state } = req.body;
   if (state === 'on' || state === 'off') {
     pendingCommand = state;
+    desiredRelay = state === 'on';
     res.json({ ok: true, pending: pendingCommand });
   } else {
     res.status(400).json({ error: 'state must be on or off' });
@@ -40,10 +42,14 @@ app.get('/', (req, res) => {
   const power    = latest.power       ?? '—';
   const energy   = latest.energy      ?? '—';
   const time     = latest.timestamp   ?? 'Waiting for first reading...';
-  const relay    = latest.relay;
+
+  if (desiredRelay !== null && latest.relay === desiredRelay) {
+    desiredRelay = null;
+  }
+  const relay      = desiredRelay !== null ? desiredRelay : latest.relay;
   const relayLabel = relay === true ? 'ON' : relay === false ? 'OFF' : '—';
-  const checked  = relay === true ? 'checked' : '';
-  const pending  = pendingCommand ? `<p class="pending">Command pending: turn ${pendingCommand}...</p>` : '';
+  const checked    = relay === true ? 'checked' : '';
+  const pending    = pendingCommand ? `<p class="pending">Command pending: turn ${pendingCommand}...</p>` : '';
 
   res.send(`<!DOCTYPE html>
 <html lang="en">
