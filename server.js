@@ -2,15 +2,9 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
-// Keyed by device name
 let devices = {};
-// { shelly1: { temperature, humidity, power, energy, relay, timestamp },  ... }
-
 let pendingCommands = {};
-// { shelly1: 'on' | 'off' | null, ... }
-
 let desiredRelays = {};
-// { shelly1: true | false | null, ... }
 
 // Shelly posts sensor data and picks up any pending command
 app.post('/data', (req, res) => {
@@ -26,7 +20,6 @@ app.post('/data', (req, res) => {
     timestamp:   new Date().toLocaleString()
   };
 
-  // Clear desiredRelay if Shelly confirms the state
   if (desiredRelays[name] !== null && desiredRelays[name] !== undefined) {
     if (devices[name].relay === desiredRelays[name]) {
       desiredRelays[name] = null;
@@ -38,7 +31,7 @@ app.post('/data', (req, res) => {
   res.json({ command: cmd });
 });
 
-// Dashboard toggle posts here — include device name in URL
+// Dashboard toggle posts here
 app.post('/command/:name', (req, res) => {
   const { name } = req.params;
   const { state } = req.body;
@@ -53,14 +46,15 @@ app.post('/command/:name', (req, res) => {
 
 function renderRow(name) {
   const d = devices[name] || {};
-  const temp     = d.temperature ?? '—';
-  const humidity = d.humidity    ?? '—';
-  const power    = d.power       ?? '—';
-  const energy   = d.energy      ?? '—';
+
+  const temp     = d.temperature != null ? d.temperature.toFixed(1) : '—';
+  const humidity = d.humidity    != null ? d.humidity.toFixed(1)    : '—';
+  const power    = d.power       != null ? d.power.toFixed(1)       : '—';
+  const energy   = d.energy      != null ? (d.energy / 1000).toFixed(1) : '—';
   const time     = d.timestamp   ?? 'No data yet';
 
-  const desired  = desiredRelays[name];
-  const relay    = (desired !== null && desired !== undefined) ? desired : d.relay;
+  const desired    = desiredRelays[name];
+  const relay      = (desired !== null && desired !== undefined) ? desired : d.relay;
   const relayLabel = relay === true ? 'ON' : relay === false ? 'OFF' : '—';
   const checked    = relay === true ? 'checked' : '';
   const pending    = pendingCommands[name]
@@ -95,7 +89,7 @@ function renderRow(name) {
       </div>
       <div class="card">
         <div class="label">Energy</div>
-        <div class="value">${energy}<span class="unit">Wh</span></div>
+        <div class="value">${energy}<span class="unit">kWh</span></div>
       </div>
     </div>
 
@@ -105,7 +99,6 @@ function renderRow(name) {
 
 // Public dashboard
 app.get('/', (req, res) => {
-  // Always show at least shelly1, plus any others that have reported in
   const knownDevices = ['shelly1', 'shelly2', 'shelly3'];
   const activeDevices = Object.keys(devices).filter(n => !knownDevices.includes(n));
   const allDevices = [...knownDevices, ...activeDevices];
@@ -125,10 +118,9 @@ app.get('/', (req, res) => {
     h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 0.4rem; }
     .subtitle { font-size: 0.85rem; color: #999; margin-bottom: 2rem; }
 
-    /* One row per device */
     .device-row {
       display: flex;
-      align-items: center;
+      align-items: stretch;
       gap: 16px;
       margin-bottom: 16px;
       flex-wrap: wrap;
@@ -138,15 +130,15 @@ app.get('/', (req, res) => {
       border-top: 1px solid #e5e5e5;
     }
 
-    /* Device name label */
     .device-name {
       font-size: 0.95rem;
       font-weight: 600;
       min-width: 80px;
       color: #444;
+      display: flex;
+      align-items: center;
     }
 
-    /* Toggle card */
     .relay-card {
       display: flex;
       flex-direction: column;
@@ -161,22 +153,32 @@ app.get('/', (req, res) => {
     .relay-label { font-size: 0.75rem; color: #666; }
     .relay-state { font-size: 1rem; font-weight: 600; }
 
-    /* Sensor tiles */
     .tiles {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 12px;
       flex: 1;
     }
-    .card { background: #f5f5f5; border-radius: 10px; padding: 12px 14px; }
+    .card {
+      background: #f5f5f5;
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
     .label { font-size: 0.75rem; color: #666; margin-bottom: 2px; }
     .value { font-size: 1.6rem; font-weight: 600; line-height: 1.1; }
     .unit  { font-size: 0.8rem; color: #888; margin-left: 2px; }
 
-    /* Timestamp */
-    .timestamp { font-size: 0.72rem; color: #bbb; min-width: 100px; }
+    .timestamp {
+      font-size: 0.72rem;
+      color: #bbb;
+      min-width: 100px;
+      display: flex;
+      align-items: center;
+    }
 
-    /* Toggle switch */
     .switch { position: relative; display: inline-block; width: 48px; height: 26px; }
     .switch input { opacity: 0; width: 0; height: 0; }
     .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #ccc; border-radius: 26px; transition: .3s; }
