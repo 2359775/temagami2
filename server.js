@@ -236,7 +236,7 @@ app.get('/', (req, res) => {
   <meta charset="UTF-8">
   <meta http-equiv="refresh" content="30">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Shelly Dashboard</title>
+  <title>Dashboard</title>
   <style>
     * { box-sizing: border-box; }
     body { font-family: sans-serif; max-width: 1300px; margin: 40px auto; padding: 0 20px; color: #222; }
