@@ -5,6 +5,31 @@ app.use(express.json());
 let devices = {};
 let pendingCommands = {};
 let desiredRelays = {};
+let history = {};
+// history[name] = [ { slot: "14:35", readings: [21.3, 21.5, 21.4], temperature: 21.4 }, ... ]
+
+function get5minSlot(date) {
+  const h = date.getHours();
+  const m = Math.floor(date.getMinutes() / 5) * 5;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+
+function updateHistory(name, temperature) {
+  if (temperature == null) return;
+  if (!history[name]) history[name] = [];
+
+  const slot = get5minSlot(new Date());
+  const arr  = history[name];
+
+  const existing = arr.find(e => e.slot === slot);
+  if (existing) {
+    existing.readings.push(temperature);
+    existing.temperature = existing.readings.reduce((a, b) => a + b, 0) / existing.readings.length;
+  } else {
+    arr.push({ slot, readings: [temperature], temperature });
+    if (arr.length > 12) arr.shift();
+  }
+}
 
 // Shelly posts sensor data and picks up any pending command
 app.post('/data', (req, res) => {
@@ -19,6 +44,8 @@ app.post('/data', (req, res) => {
     relay:       req.body.relay       ?? null,
     timestamp:   new Date().toLocaleString()
   };
+
+  updateHistory(name, req.body.temperature ?? null);
 
   if (desiredRelays[name] !== null && desiredRelays[name] !== undefined) {
     if (devices[name].relay === desiredRelays[name]) {
@@ -44,6 +71,69 @@ app.post('/command/:name', (req, res) => {
   }
 });
 
+function renderChart(name) {
+  const arr = history[name];
+  if (!arr || arr.length < 2) return '';
+
+  const W = 260, H = 80;
+  const padL = 36, padR = 8, padT = 8, padB = 20;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+
+  const temps = arr.map(e => e.temperature);
+  const minT  = Math.min(...temps);
+  const maxT  = Math.max(...temps);
+  const rangeT = maxT - minT || 1;
+
+  const xStep = chartW / (arr.length - 1);
+
+  const points = arr.map((e, i) => {
+    const x = padL + i * xStep;
+    const y = padT + chartH - ((e.temperature - minT) / rangeT) * chartH;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+
+  const yTop    = (padT + 4).toFixed(1);
+  const yBottom = (padT + chartH).toFixed(1);
+  const yMid    = (padT + chartH / 2).toFixed(1);
+  const tMid    = ((minT + maxT) / 2).toFixed(1);
+
+  const firstSlot = arr[0].slot;
+  const lastSlot  = arr[arr.length - 1].slot;
+
+  return `
+  <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;display:block;">
+    <line x1="${padL}" y1="${padT}" x2="${W - padR}" y2="${padT}"
+          stroke="#e0e0e0" stroke-width="1"/>
+    <line x1="${padL}" y1="${padT + chartH / 2}" x2="${W - padR}" y2="${padT + chartH / 2}"
+          stroke="#e0e0e0" stroke-width="1" stroke-dasharray="3,3"/>
+    <line x1="${padL}" y1="${padT + chartH}" x2="${W - padR}" y2="${padT + chartH}"
+          stroke="#e0e0e0" stroke-width="1"/>
+
+    <text x="${padL - 4}" y="${yTop}"
+          text-anchor="end" font-size="9" fill="#999">${maxT.toFixed(1)}</text>
+    <text x="${padL - 4}" y="${yMid}"
+          text-anchor="end" font-size="9" fill="#999">${tMid}</text>
+    <text x="${padL - 4}" y="${yBottom}"
+          text-anchor="end" font-size="9" fill="#999">${minT.toFixed(1)}</text>
+
+    <text x="${padL}" y="${H - 2}"
+          text-anchor="middle" font-size="9" fill="#999">${firstSlot}</text>
+    <text x="${W - padR}" y="${H - 2}"
+          text-anchor="middle" font-size="9" fill="#999">${lastSlot}</text>
+
+    <polyline points="${points}"
+              fill="none" stroke="#4CAF50" stroke-width="2"
+              stroke-linejoin="round" stroke-linecap="round"/>
+
+    ${arr.map((e, i) => {
+      const x = padL + i * xStep;
+      const y = padT + chartH - ((e.temperature - minT) / rangeT) * chartH;
+      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="#4CAF50"/>`;
+    }).join('')}
+  </svg>`;
+}
+
 function renderRow(name) {
   const d = devices[name] || {};
 
@@ -59,6 +149,11 @@ function renderRow(name) {
   const checked    = relay === true ? 'checked' : '';
   const pending    = pendingCommands[name]
     ? `<span class="pending">Pending: turn ${pendingCommands[name]}...</span>` : '';
+
+  const chart = d.temperature != null ? renderChart(name) : '';
+  const chartBlock = chart
+    ? `<div class="chart-card"><div class="label">Temp °C — last hour</div>${chart}</div>`
+    : '';
 
   return `
   <div class="device-row">
@@ -93,6 +188,8 @@ function renderRow(name) {
       </div>
     </div>
 
+    ${chartBlock}
+
     <div class="timestamp">${time}</div>
   </div>`;
 }
@@ -114,7 +211,7 @@ app.get('/', (req, res) => {
   <title>Shelly Dashboard</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #222; }
+    body { font-family: sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; color: #222; }
     h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 0.4rem; }
     .subtitle { font-size: 0.85rem; color: #999; margin-bottom: 2rem; }
 
@@ -167,7 +264,16 @@ app.get('/', (req, res) => {
       flex-direction: column;
       justify-content: center;
     }
-    .label { font-size: 0.75rem; color: #666; margin-bottom: 2px; }
+    .chart-card {
+      background: #f5f5f5;
+      border-radius: 10px;
+      padding: 12px 14px;
+      min-width: 260px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .label { font-size: 0.75rem; color: #666; margin-bottom: 4px; }
     .value { font-size: 1.6rem; font-weight: 600; line-height: 1.1; }
     .unit  { font-size: 0.8rem; color: #888; margin-left: 2px; }
 
@@ -192,6 +298,7 @@ app.get('/', (req, res) => {
     @media (max-width: 600px) {
       .tiles { grid-template-columns: repeat(2, 1fr); }
       .timestamp { display: none; }
+      .chart-card { min-width: 100%; }
     }
   </style>
 </head>
