@@ -8,7 +8,7 @@ let desiredRelays = {};
 let history = {};
 
 const TIMEZONE = 'America/New_York';
-const STALE_MS = 10 * 60 * 1000; // 10 minutes
+const STALE_MS = 10 * 60 * 1000;
 
 function get5minSlot(date) {
   const str = date.toLocaleString('en-US', {
@@ -96,7 +96,9 @@ app.post('/command/:name', (req, res) => {
 
 function renderChart(name) {
   const arr = history[name];
-  if (!arr || arr.length < 2) return `<div class="chart-card" style="min-width:260px;"><div style="font-size:0.75rem;color:#bbb;padding:10px 0;">Waiting for data...</div></div>`;
+  if (!arr || arr.length < 2) {
+    return `<div class="chart-card"><div style="font-size:0.75rem;color:#bbb;padding:10px 0;">Waiting for data...</div></div>`;
+  }
 
   const W = 280, H = 80;
   const padL = 36, padR = 8, padT = 8, padB = 20;
@@ -105,7 +107,7 @@ function renderChart(name) {
 
   function buildSVG(values, color) {
     const valid = values.filter(v => v != null);
-    if (valid.length < 2) return '<div style="font-size:0.75rem;color:#bbb;padding:10px 0;">No data</div>';
+    if (valid.length < 2) return null;
 
     const minV   = Math.min(...valid);
     const maxV   = Math.max(...valid);
@@ -146,21 +148,34 @@ function renderChart(name) {
   const powerValues = arr.map(e => e.power);
   const tempSVG     = buildSVG(tempValues,  '#4CAF50');
   const powerSVG    = buildSVG(powerValues, '#2196F3');
-  const hasTemp     = tempValues.some(v => v != null);
-  const hasPower    = powerValues.some(v => v != null);
-  const safeId      = name.replace(/[^a-zA-Z0-9]/g, '_');
+  const hasTemp     = tempSVG !== null;
+  const hasPower    = powerSVG !== null;
+
+  // Default to whichever has data; prefer temp if both available
+  const defaultView = hasTemp ? 'temp' : 'power';
+
+  const safeId = name.replace(/[^a-zA-Z0-9]/g, '_');
+
+  // Button styles
+  const btnActive   = (color) => `font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid ${color};background:${color};color:white;cursor:pointer;font-weight:500;`;
+  const btnInactive = `font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid #ccc;background:transparent;color:#666;cursor:pointer;font-weight:400;`;
+
+  const tempBtnStyle  = defaultView === 'temp' ? btnActive('#4CAF50') : btnInactive;
+  const powerBtnStyle = defaultView === 'power' ? btnActive('#2196F3') : btnInactive;
+
+  const defaultLabel  = defaultView === 'temp' ? 'Temp \u00b0C \u2014 last 24h' : 'Power W \u2014 last 24h';
 
   return `
   <div id="chart-${safeId}" class="chart-card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-      <span id="chart-label-${safeId}" style="font-size:11px;color:#666;">Temp \u00b0C \u2014 last 24h</span>
-      <div style="display:flex;gap:4px;">
-        ${hasTemp  ? `<button onclick="switchChart('${safeId}','temp')"  id="btn-temp-${safeId}"  style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #4CAF50;background:#4CAF50;color:white;cursor:pointer;">Temp</button>`  : ''}
-        ${hasPower ? `<button onclick="switchChart('${safeId}','power')" id="btn-power-${safeId}" style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #ccc;background:transparent;color:#666;cursor:pointer;">Power</button>` : ''}
+      <span id="chart-label-${safeId}" style="font-size:11px;color:#666;">${defaultLabel}</span>
+      <div style="display:flex;gap:5px;">
+        ${hasTemp  ? `<button onclick="switchChart('${safeId}','temp')"  id="btn-temp-${safeId}"  style="${tempBtnStyle}">Temp</button>`  : ''}
+        ${hasPower ? `<button onclick="switchChart('${safeId}','power')" id="btn-power-${safeId}" style="${powerBtnStyle}">Power</button>` : ''}
       </div>
     </div>
-    <div id="chart-temp-${safeId}">${tempSVG}</div>
-    <div id="chart-power-${safeId}" style="display:none;">${powerSVG}</div>
+    <div id="chart-temp-${safeId}"  style="display:${defaultView === 'temp'  ? '' : 'none'};">${tempSVG  || ''}</div>
+    <div id="chart-power-${safeId}" style="display:${defaultView === 'power' ? '' : 'none'};">${powerSVG || ''}</div>
   </div>`;
 }
 
@@ -236,14 +251,13 @@ app.get('/', (req, res) => {
   <meta charset="UTF-8">
   <meta http-equiv="refresh" content="30">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dashboard</title>
+  <title>Shelly Dashboard</title>
   <style>
     * { box-sizing: border-box; }
     body { font-family: sans-serif; max-width: 1300px; margin: 40px auto; padding: 0 20px; color: #222; }
     h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 0.4rem; }
     .subtitle { font-size: 0.85rem; color: #999; margin-bottom: 2rem; }
 
-    /* Table-like grid so all columns align across rows */
     .device-row {
       display: grid;
       grid-template-columns:
@@ -334,9 +348,7 @@ app.get('/', (req, res) => {
     .footer  { font-size: 0.8rem; color: #999; margin-top: 24px; }
 
     @media (max-width: 900px) {
-      .device-row {
-        grid-template-columns: 1fr 1fr;
-      }
+      .device-row { grid-template-columns: 1fr 1fr; }
       .col-chart     { grid-column: 1 / -1; }
       .col-timestamp { display: none; }
     }
@@ -359,16 +371,16 @@ app.get('/', (req, res) => {
       const label    = document.getElementById('chart-label-' + safeId);
 
       if (type === 'temp') {
-        tempDiv.style.display  = '';
-        powerDiv.style.display = 'none';
-        if (btnTemp)  { btnTemp.style.background  = '#4CAF50';     btnTemp.style.color  = 'white'; btnTemp.style.borderColor  = '#4CAF50'; }
-        if (btnPower) { btnPower.style.background = 'transparent'; btnPower.style.color = '#666';  btnPower.style.borderColor = '#ccc'; }
+        if (tempDiv)  tempDiv.style.display  = '';
+        if (powerDiv) powerDiv.style.display = 'none';
+        if (btnTemp)  { btnTemp.style.background  = '#4CAF50';     btnTemp.style.color  = 'white'; btnTemp.style.borderColor  = '#4CAF50';  btnTemp.style.fontWeight  = '500'; }
+        if (btnPower) { btnPower.style.background = 'transparent'; btnPower.style.color = '#666';  btnPower.style.borderColor = '#ccc';     btnPower.style.fontWeight = '400'; }
         if (label) label.textContent = 'Temp \u00b0C \u2014 last 24h';
       } else {
-        tempDiv.style.display  = 'none';
-        powerDiv.style.display = '';
-        if (btnPower) { btnPower.style.background = '#2196F3';     btnPower.style.color = 'white'; btnPower.style.borderColor = '#2196F3'; }
-        if (btnTemp)  { btnTemp.style.background  = 'transparent'; btnTemp.style.color  = '#666';  btnTemp.style.borderColor  = '#ccc'; }
+        if (tempDiv)  tempDiv.style.display  = 'none';
+        if (powerDiv) powerDiv.style.display = '';
+        if (btnPower) { btnPower.style.background = '#2196F3';     btnPower.style.color = 'white'; btnPower.style.borderColor = '#2196F3';  btnPower.style.fontWeight = '500'; }
+        if (btnTemp)  { btnTemp.style.background  = 'transparent'; btnTemp.style.color  = '#666';  btnTemp.style.borderColor  = '#ccc';     btnTemp.style.fontWeight  = '400'; }
         if (label) label.textContent = 'Power W \u2014 last 24h';
       }
     }
