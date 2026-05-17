@@ -6,8 +6,6 @@ let devices = {};
 let pendingCommands = {};
 let desiredRelays = {};
 let history = {};
-// history[name] = [ { slot: "14:35", tempReadings: [], temperature: 21.4, powerReadings: [], power: 142.3 }, ... ]
-// max 288 entries (24hrs x 12 slots/hr)
 
 function get5minSlot(date) {
   const h = date.getHours();
@@ -44,7 +42,6 @@ function updateHistory(name, temperature, power) {
   }
 }
 
-// Shelly posts sensor data and picks up any pending command
 app.post('/data', (req, res) => {
   const name = req.body.name || 'unknown';
   console.log(`Received from ${name}:`, req.body);
@@ -71,7 +68,6 @@ app.post('/data', (req, res) => {
   res.json({ command: cmd });
 });
 
-// Dashboard toggle posts here
 app.post('/command/:name', (req, res) => {
   const { name } = req.params;
   const { state } = req.body;
@@ -86,14 +82,14 @@ app.post('/command/:name', (req, res) => {
 
 function renderChart(name) {
   const arr = history[name];
-  if (!arr || arr.length < 2) return '<div style="font-size:0.75rem;color:#bbb;padding:10px 0;">Waiting for data...</div>';
+  if (!arr || arr.length < 2) return '<div style="font-size:0.75rem;color:#bbb;padding:10px 0;min-width:260px;">Waiting for data...</div>';
 
   const W = 280, H = 80;
   const padL = 36, padR = 8, padT = 8, padB = 20;
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
 
-  function buildSVG(values, color, unit) {
+  function buildSVG(values, color) {
     const valid = values.filter(v => v != null);
     if (valid.length < 2) return '<div style="font-size:0.75rem;color:#bbb;padding:10px 0;">No data</div>';
 
@@ -103,11 +99,10 @@ function renderChart(name) {
     const xStep  = chartW / (values.length - 1);
 
     const points = values.map((v, i) => {
+      if (v == null) return null;
       const x = padL + i * xStep;
-      const y = v != null
-        ? padT + chartH - ((v - minV) / rangeV) * chartH
-        : null;
-      return y != null ? `${x.toFixed(1)},${y.toFixed(1)}` : null;
+      const y = padT + chartH - ((v - minV) / rangeV) * chartH;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).filter(Boolean).join(' ');
 
     const firstSlot = arr[0].slot;
@@ -135,25 +130,23 @@ function renderChart(name) {
 
   const tempValues  = arr.map(e => e.temperature);
   const powerValues = arr.map(e => e.power);
-  const tempSVG     = buildSVG(tempValues,  '#4CAF50', '°C');
-  const powerSVG    = buildSVG(powerValues, '#2196F3', 'W');
-
-  const hastemp  = tempValues.some(v => v != null);
-  const haspower = powerValues.some(v => v != null);
+  const tempSVG     = buildSVG(tempValues,  '#4CAF50');
+  const powerSVG    = buildSVG(powerValues, '#2196F3');
+  const hasTemp     = tempValues.some(v => v != null);
+  const hasPower    = powerValues.some(v => v != null);
+  const safeId      = name.replace(/[^a-zA-Z0-9]/g, '_');
 
   return `
-  <div id="chart-${name}" style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 14px;border:0.5px solid var(--color-border-tertiary);display:flex;flex-direction:column;min-width:260px;justify-content:center;">
+  <div id="chart-${safeId}" style="background:#f5f5f5;border-radius:10px;padding:10px 14px;border:0.5px solid #e0e0e0;display:flex;flex-direction:column;min-width:260px;justify-content:center;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-      <span id="chart-label-${name}" style="font-size:11px;color:var(--color-text-secondary);">Temp °C — last 24h</span>
+      <span id="chart-label-${safeId}" style="font-size:11px;color:#666;">Temp \u00b0C \u2014 last 24h</span>
       <div style="display:flex;gap:4px;">
-        ${hastemp ? `<button onclick="switchChart('${name}','temp')" id="btn-temp-${name}"
-          style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #4CAF50;background:#4CAF50;color:white;cursor:pointer;">Temp</button>` : ''}
-        ${haspower ? `<button onclick="switchChart('${name}','power')" id="btn-power-${name}"
-          style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #ccc;background:transparent;color:var(--color-text-secondary);cursor:pointer;">Power</button>` : ''}
+        ${hasTemp  ? `<button onclick="switchChart('${safeId}','temp')"  id="btn-temp-${safeId}"  style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #4CAF50;background:#4CAF50;color:white;cursor:pointer;">Temp</button>`  : ''}
+        ${hasPower ? `<button onclick="switchChart('${safeId}','power')" id="btn-power-${safeId}" style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #ccc;background:transparent;color:#666;cursor:pointer;">Power</button>` : ''}
       </div>
     </div>
-    <div id="chart-temp-${name}">${tempSVG}</div>
-    <div id="chart-power-${name}" style="display:none;">${powerSVG}</div>
+    <div id="chart-temp-${safeId}">${tempSVG}</div>
+    <div id="chart-power-${safeId}" style="display:none;">${powerSVG}</div>
   </div>`;
 }
 
@@ -212,13 +205,12 @@ function renderRow(name) {
   </div>`;
 }
 
-// Public dashboard
 app.get('/', (req, res) => {
-  const knownDevices = ['shelly1', 'shelly2', 'shelly3'];
-  const activeDevices = Object.keys(devices).filter(n => !knownDevices.includes(n));
-  const allDevices = [...knownDevices, ...activeDevices];
+  const allDevices = Object.keys(devices);
 
-  const rows = allDevices.map(renderRow).join('');
+  const rows = allDevices.length > 0
+    ? allDevices.map(renderRow).join('')
+    : '<p style="color:#999;font-size:0.9rem;">Waiting for devices to report in...</p>';
 
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -320,30 +312,30 @@ app.get('/', (req, res) => {
   <p class="footer">Page last rendered: ${new Date().toLocaleString()}</p>
 
   <script>
-    function switchChart(name, type) {
-      const tempDiv   = document.getElementById('chart-temp-'  + name);
-      const powerDiv  = document.getElementById('chart-power-' + name);
-      const btnTemp   = document.getElementById('btn-temp-'    + name);
-      const btnPower  = document.getElementById('btn-power-'   + name);
-      const label     = document.getElementById('chart-label-' + name);
+    function switchChart(safeId, type) {
+      const tempDiv  = document.getElementById('chart-temp-'  + safeId);
+      const powerDiv = document.getElementById('chart-power-' + safeId);
+      const btnTemp  = document.getElementById('btn-temp-'    + safeId);
+      const btnPower = document.getElementById('btn-power-'   + safeId);
+      const label    = document.getElementById('chart-label-' + safeId);
 
       if (type === 'temp') {
         tempDiv.style.display  = '';
         powerDiv.style.display = 'none';
-        if (btnTemp)  { btnTemp.style.background  = '#4CAF50'; btnTemp.style.color  = 'white'; btnTemp.style.borderColor  = '#4CAF50'; }
-        if (btnPower) { btnPower.style.background = 'transparent'; btnPower.style.color = 'var(--color-text-secondary,#666)'; btnPower.style.borderColor = '#ccc'; }
+        if (btnTemp)  { btnTemp.style.background  = '#4CAF50';     btnTemp.style.color  = 'white'; btnTemp.style.borderColor  = '#4CAF50'; }
+        if (btnPower) { btnPower.style.background = 'transparent'; btnPower.style.color = '#666';  btnPower.style.borderColor = '#ccc'; }
         if (label) label.textContent = 'Temp \u00b0C \u2014 last 24h';
       } else {
         tempDiv.style.display  = 'none';
         powerDiv.style.display = '';
-        if (btnPower) { btnPower.style.background = '#2196F3'; btnPower.style.color = 'white'; btnPower.style.borderColor = '#2196F3'; }
-        if (btnTemp)  { btnTemp.style.background  = 'transparent'; btnTemp.style.color = 'var(--color-text-secondary,#666)'; btnTemp.style.borderColor  = '#ccc'; }
+        if (btnPower) { btnPower.style.background = '#2196F3';     btnPower.style.color = 'white'; btnPower.style.borderColor = '#2196F3'; }
+        if (btnTemp)  { btnTemp.style.background  = 'transparent'; btnTemp.style.color  = '#666';  btnTemp.style.borderColor  = '#ccc'; }
         if (label) label.textContent = 'Power W \u2014 last 24h';
       }
     }
 
     function sendCommand(name, isOn) {
-      fetch('/command/' + name, {
+      fetch('/command/' + encodeURIComponent(name), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ state: isOn ? 'on' : 'off' })
