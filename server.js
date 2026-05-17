@@ -7,10 +7,23 @@ let pendingCommands = {};
 let desiredRelays = {};
 let history = {};
 
+const TIMEZONE = 'America/New_York';
+const STALE_MS = 10 * 60 * 1000; // 10 minutes
+
 function get5minSlot(date) {
-  const h = date.getHours();
-  const m = Math.floor(date.getMinutes() / 5) * 5;
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  const str = date.toLocaleString('en-US', {
+    timeZone: TIMEZONE,
+    hour:     '2-digit',
+    minute:   '2-digit',
+    hour12:   false
+  });
+  const [h, m] = str.split(':').map(Number);
+  const mSlot = Math.floor(m / 5) * 5;
+  return `${String(h).padStart(2,'0')}:${String(mSlot).padStart(2,'0')}`;
+}
+
+function nowET() {
+  return new Date().toLocaleString('en-US', { timeZone: TIMEZONE });
 }
 
 function updateHistory(name, temperature, power) {
@@ -52,7 +65,8 @@ app.post('/data', (req, res) => {
     power:       req.body.power       ?? null,
     energy:      req.body.energy      ?? null,
     relay:       req.body.relay       ?? null,
-    timestamp:   new Date().toLocaleString()
+    timestamp:   nowET(),
+    lastSeen:    Date.now()
   };
 
   updateHistory(name, req.body.temperature ?? null, req.body.power ?? null);
@@ -82,7 +96,7 @@ app.post('/command/:name', (req, res) => {
 
 function renderChart(name) {
   const arr = history[name];
-  if (!arr || arr.length < 2) return '<div style="font-size:0.75rem;color:#bbb;padding:10px 0;min-width:260px;">Waiting for data...</div>';
+  if (!arr || arr.length < 2) return `<div class="chart-card" style="min-width:260px;"><div style="font-size:0.75rem;color:#bbb;padding:10px 0;">Waiting for data...</div></div>`;
 
   const W = 280, H = 80;
   const padL = 36, padR = 8, padT = 8, padB = 20;
@@ -137,7 +151,7 @@ function renderChart(name) {
   const safeId      = name.replace(/[^a-zA-Z0-9]/g, '_');
 
   return `
-  <div id="chart-${safeId}" style="background:#f5f5f5;border-radius:10px;padding:10px 14px;border:0.5px solid #e0e0e0;display:flex;flex-direction:column;min-width:260px;justify-content:center;">
+  <div id="chart-${safeId}" class="chart-card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
       <span id="chart-label-${safeId}" style="font-size:11px;color:#666;">Temp \u00b0C \u2014 last 24h</span>
       <div style="display:flex;gap:4px;">
@@ -151,14 +165,12 @@ function renderChart(name) {
 }
 
 function renderRow(name) {
-  const d = devices[name] || {};
-
-  const temp     = d.temperature != null ? d.temperature.toFixed(1) : '—';
-  const humidity = d.humidity    != null ? d.humidity.toFixed(1)    : '—';
-  const power    = d.power       != null ? d.power.toFixed(1)       : '—';
-  const energy   = d.energy      != null ? (d.energy / 1000).toFixed(1) : '—';
-  const time     = d.timestamp   ?? 'No data yet';
-
+  const d          = devices[name] || {};
+  const temp       = d.temperature != null ? d.temperature.toFixed(1) : '—';
+  const humidity   = d.humidity    != null ? d.humidity.toFixed(1)    : '—';
+  const power      = d.power       != null ? d.power.toFixed(1)       : '—';
+  const energy     = d.energy      != null ? (d.energy / 1000).toFixed(1) : '—';
+  const time       = d.timestamp   ?? 'No data yet';
   const desired    = desiredRelays[name];
   const relay      = (desired !== null && desired !== undefined) ? desired : d.relay;
   const relayLabel = relay === true ? 'ON' : relay === false ? 'OFF' : '—';
@@ -168,9 +180,9 @@ function renderRow(name) {
 
   return `
   <div class="device-row">
-    <div class="device-name">${name}</div>
+    <div class="col-name device-name">${name}</div>
 
-    <div class="relay-card">
+    <div class="col-relay relay-card">
       <div class="relay-label">Relay</div>
       <label class="switch">
         <input type="checkbox" ${checked} onchange="sendCommand('${name}', this.checked)">
@@ -180,33 +192,39 @@ function renderRow(name) {
       ${pending}
     </div>
 
-    <div class="tiles">
-      <div class="card">
-        <div class="label">Temperature</div>
-        <div class="value">${temp}<span class="unit">°C</span></div>
-      </div>
-      <div class="card">
-        <div class="label">Humidity</div>
-        <div class="value">${humidity}<span class="unit">%</span></div>
-      </div>
-      <div class="card">
-        <div class="label">Power</div>
-        <div class="value">${power}<span class="unit">W</span></div>
-      </div>
-      <div class="card">
-        <div class="label">Energy</div>
-        <div class="value">${energy}<span class="unit">kWh</span></div>
-      </div>
+    <div class="col-temp card">
+      <div class="label">Temperature</div>
+      <div class="value">${temp}<span class="unit">°C</span></div>
     </div>
 
-    ${renderChart(name)}
+    <div class="col-humidity card">
+      <div class="label">Humidity</div>
+      <div class="value">${humidity}<span class="unit">%</span></div>
+    </div>
 
-    <div class="timestamp">${time}</div>
+    <div class="col-power card">
+      <div class="label">Power</div>
+      <div class="value">${power}<span class="unit">W</span></div>
+    </div>
+
+    <div class="col-energy card">
+      <div class="label">Energy</div>
+      <div class="value">${energy}<span class="unit">kWh</span></div>
+    </div>
+
+    <div class="col-chart">
+      ${renderChart(name)}
+    </div>
+
+    <div class="col-timestamp timestamp">${time}</div>
   </div>`;
 }
 
 app.get('/', (req, res) => {
-  const allDevices = Object.keys(devices);
+  const now        = Date.now();
+  const allDevices = Object.keys(devices).filter(name =>
+    devices[name].lastSeen && (now - devices[name].lastSeen) < STALE_MS
+  );
 
   const rows = allDevices.length > 0
     ? allDevices.map(renderRow).join('')
@@ -221,26 +239,43 @@ app.get('/', (req, res) => {
   <title>Shelly Dashboard</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: sans-serif; max-width: 1200px; margin: 40px auto; padding: 0 20px; color: #222; }
+    body { font-family: sans-serif; max-width: 1300px; margin: 40px auto; padding: 0 20px; color: #222; }
     h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 0.4rem; }
     .subtitle { font-size: 0.85rem; color: #999; margin-bottom: 2rem; }
 
+    /* Table-like grid so all columns align across rows */
     .device-row {
-      display: flex;
+      display: grid;
+      grid-template-columns:
+        [name]      minmax(100px, max-content)
+        [relay]     90px
+        [temp]      100px
+        [humidity]  100px
+        [power]     100px
+        [energy]    100px
+        [chart]     minmax(260px, 1fr)
+        [timestamp] minmax(80px, max-content);
+      gap: 12px;
       align-items: stretch;
-      gap: 16px;
       margin-bottom: 12px;
-      flex-wrap: wrap;
     }
     .device-row + .device-row {
-      padding-top: 16px;
+      padding-top: 12px;
       border-top: 1px solid #e5e5e5;
     }
 
+    .col-name      { grid-column: name; }
+    .col-relay     { grid-column: relay; }
+    .col-temp      { grid-column: temp; }
+    .col-humidity  { grid-column: humidity; }
+    .col-power     { grid-column: power; }
+    .col-energy    { grid-column: energy; }
+    .col-chart     { grid-column: chart; }
+    .col-timestamp { grid-column: timestamp; }
+
     .device-name {
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       font-weight: 600;
-      min-width: 80px;
       color: #444;
       display: flex;
       align-items: center;
@@ -253,63 +288,67 @@ app.get('/', (req, res) => {
       justify-content: center;
       background: #f5f5f5;
       border-radius: 10px;
-      padding: 12px 16px;
-      min-width: 90px;
-      gap: 6px;
+      padding: 10px 12px;
+      gap: 5px;
     }
-    .relay-label { font-size: 0.75rem; color: #666; }
-    .relay-state { font-size: 1rem; font-weight: 600; }
+    .relay-label { font-size: 0.72rem; color: #666; }
+    .relay-state { font-size: 0.9rem; font-weight: 600; }
 
-    .tiles {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      flex: 1;
-      min-width: 260px;
-    }
     .card {
       background: #f5f5f5;
       border-radius: 10px;
-      padding: 12px 14px;
+      padding: 10px 12px;
       display: flex;
       flex-direction: column;
       justify-content: center;
     }
-    .label { font-size: 0.75rem; color: #666; margin-bottom: 2px; }
-    .value { font-size: 1.6rem; font-weight: 600; line-height: 1.1; }
-    .unit  { font-size: 0.8rem; color: #888; margin-left: 2px; }
+
+    .chart-card {
+      background: #f5f5f5;
+      border-radius: 10px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .label { font-size: 0.72rem; color: #666; margin-bottom: 2px; }
+    .value { font-size: 1.4rem; font-weight: 600; line-height: 1.1; }
+    .unit  { font-size: 0.75rem; color: #888; margin-left: 2px; }
 
     .timestamp {
-      font-size: 0.72rem;
+      font-size: 0.7rem;
       color: #bbb;
-      min-width: 90px;
       display: flex;
       align-items: center;
     }
 
-    .switch { position: relative; display: inline-block; width: 48px; height: 26px; }
+    .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
     .switch input { opacity: 0; width: 0; height: 0; }
-    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #ccc; border-radius: 26px; transition: .3s; }
-    .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 4px; bottom: 4px; background: white; border-radius: 50%; transition: .3s; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #ccc; border-radius: 24px; transition: .3s; }
+    .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background: white; border-radius: 50%; transition: .3s; }
     input:checked + .slider { background: #4CAF50; }
-    input:checked + .slider:before { transform: translateX(22px); }
+    input:checked + .slider:before { transform: translateX(20px); }
 
-    .pending { font-size: 0.7rem; color: #e67e00; text-align: center; }
+    .pending { font-size: 0.65rem; color: #e67e00; text-align: center; }
     .footer  { font-size: 0.8rem; color: #999; margin-top: 24px; }
 
-    @media (max-width: 600px) {
-      .tiles { grid-template-columns: repeat(2, 1fr); }
-      .timestamp { display: none; }
+    @media (max-width: 900px) {
+      .device-row {
+        grid-template-columns: 1fr 1fr;
+      }
+      .col-chart     { grid-column: 1 / -1; }
+      .col-timestamp { display: none; }
     }
   </style>
 </head>
 <body>
   <h1>Shelly Dashboard</h1>
-  <p class="subtitle">Refreshes every 30s</p>
+  <p class="subtitle">Refreshes every 30s &mdash; Eastern Time</p>
 
   ${rows}
 
-  <p class="footer">Page last rendered: ${new Date().toLocaleString()}</p>
+  <p class="footer">Page last rendered: ${nowET()} ET</p>
 
   <script>
     function switchChart(safeId, type) {
