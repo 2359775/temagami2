@@ -6,7 +6,8 @@ let devices = {};
 let pendingCommands = {};
 let desiredRelays = {};
 let history = {};
-// history[name] = [ { slot: "14:35", readings: [21.3, 21.5, 21.4], temperature: 21.4 }, ... ]
+// history[name] = [ { slot: "14:35", tempReadings: [], temperature: 21.4, powerReadings: [], power: 142.3 }, ... ]
+// max 288 entries (24hrs x 12 slots/hr)
 
 function get5minSlot(date) {
   const h = date.getHours();
@@ -14,8 +15,8 @@ function get5minSlot(date) {
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
 }
 
-function updateHistory(name, temperature) {
-  if (temperature == null) return;
+function updateHistory(name, temperature, power) {
+  if (temperature == null && power == null) return;
   if (!history[name]) history[name] = [];
 
   const slot = get5minSlot(new Date());
@@ -23,11 +24,23 @@ function updateHistory(name, temperature) {
 
   const existing = arr.find(e => e.slot === slot);
   if (existing) {
-    existing.readings.push(temperature);
-    existing.temperature = existing.readings.reduce((a, b) => a + b, 0) / existing.readings.length;
+    if (temperature != null) {
+      existing.tempReadings.push(temperature);
+      existing.temperature = existing.tempReadings.reduce((a, b) => a + b, 0) / existing.tempReadings.length;
+    }
+    if (power != null) {
+      existing.powerReadings.push(power);
+      existing.power = existing.powerReadings.reduce((a, b) => a + b, 0) / existing.powerReadings.length;
+    }
   } else {
-    arr.push({ slot, readings: [temperature], temperature });
-    if (arr.length > 12) arr.shift();
+    arr.push({
+      slot,
+      tempReadings:  temperature != null ? [temperature] : [],
+      temperature:   temperature,
+      powerReadings: power != null ? [power] : [],
+      power:         power
+    });
+    if (arr.length > 288) arr.shift();
   }
 }
 
@@ -45,7 +58,7 @@ app.post('/data', (req, res) => {
     timestamp:   new Date().toLocaleString()
   };
 
-  updateHistory(name, req.body.temperature ?? null);
+  updateHistory(name, req.body.temperature ?? null, req.body.power ?? null);
 
   if (desiredRelays[name] !== null && desiredRelays[name] !== undefined) {
     if (devices[name].relay === desiredRelays[name]) {
@@ -73,65 +86,75 @@ app.post('/command/:name', (req, res) => {
 
 function renderChart(name) {
   const arr = history[name];
-  if (!arr || arr.length < 2) return '';
+  if (!arr || arr.length < 2) return '<div style="font-size:0.75rem;color:#bbb;padding:10px 0;">Waiting for data...</div>';
 
-  const W = 260, H = 80;
+  const W = 280, H = 80;
   const padL = 36, padR = 8, padT = 8, padB = 20;
   const chartW = W - padL - padR;
   const chartH = H - padT - padB;
 
-  const temps = arr.map(e => e.temperature);
-  const minT  = Math.min(...temps);
-  const maxT  = Math.max(...temps);
-  const rangeT = maxT - minT || 1;
+  function buildSVG(values, color, unit) {
+    const valid = values.filter(v => v != null);
+    if (valid.length < 2) return '<div style="font-size:0.75rem;color:#bbb;padding:10px 0;">No data</div>';
 
-  const xStep = chartW / (arr.length - 1);
+    const minV   = Math.min(...valid);
+    const maxV   = Math.max(...valid);
+    const rangeV = maxV - minV || 1;
+    const xStep  = chartW / (values.length - 1);
 
-  const points = arr.map((e, i) => {
-    const x = padL + i * xStep;
-    const y = padT + chartH - ((e.temperature - minT) / rangeT) * chartH;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
+    const points = values.map((v, i) => {
+      const x = padL + i * xStep;
+      const y = v != null
+        ? padT + chartH - ((v - minV) / rangeV) * chartH
+        : null;
+      return y != null ? `${x.toFixed(1)},${y.toFixed(1)}` : null;
+    }).filter(Boolean).join(' ');
 
-  const yTop    = (padT + 4).toFixed(1);
-  const yBottom = (padT + chartH).toFixed(1);
-  const yMid    = (padT + chartH / 2).toFixed(1);
-  const tMid    = ((minT + maxT) / 2).toFixed(1);
+    const firstSlot = arr[0].slot;
+    const lastSlot  = arr[arr.length - 1].slot;
+    const tMid      = ((minV + maxV) / 2).toFixed(1);
 
-  const firstSlot = arr[0].slot;
-  const lastSlot  = arr[arr.length - 1].slot;
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;display:block;">
+      <line x1="${padL}" y1="${padT}" x2="${W-padR}" y2="${padT}" stroke="#e0e0e0" stroke-width="1"/>
+      <line x1="${padL}" y1="${padT+chartH/2}" x2="${W-padR}" y2="${padT+chartH/2}" stroke="#e0e0e0" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="${padL}" y1="${padT+chartH}" x2="${W-padR}" y2="${padT+chartH}" stroke="#e0e0e0" stroke-width="1"/>
+      <text x="${padL-4}" y="${padT+4}" text-anchor="end" font-size="9" fill="#999">${maxV.toFixed(1)}</text>
+      <text x="${padL-4}" y="${padT+chartH/2+3}" text-anchor="end" font-size="9" fill="#999">${tMid}</text>
+      <text x="${padL-4}" y="${padT+chartH}" text-anchor="end" font-size="9" fill="#999">${minV.toFixed(1)}</text>
+      <text x="${padL}" y="${H-2}" text-anchor="middle" font-size="9" fill="#999">${firstSlot}</text>
+      <text x="${W-padR}" y="${H-2}" text-anchor="middle" font-size="9" fill="#999">${lastSlot}</text>
+      <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      ${values.map((v, i) => {
+        if (v == null) return '';
+        const x = padL + i * xStep;
+        const y = padT + chartH - ((v - minV) / rangeV) * chartH;
+        return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2" fill="${color}"/>`;
+      }).join('')}
+    </svg>`;
+  }
+
+  const tempValues  = arr.map(e => e.temperature);
+  const powerValues = arr.map(e => e.power);
+  const tempSVG     = buildSVG(tempValues,  '#4CAF50', '°C');
+  const powerSVG    = buildSVG(powerValues, '#2196F3', 'W');
+
+  const hastemp  = tempValues.some(v => v != null);
+  const haspower = powerValues.some(v => v != null);
 
   return `
-  <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;display:block;">
-    <line x1="${padL}" y1="${padT}" x2="${W - padR}" y2="${padT}"
-          stroke="#e0e0e0" stroke-width="1"/>
-    <line x1="${padL}" y1="${padT + chartH / 2}" x2="${W - padR}" y2="${padT + chartH / 2}"
-          stroke="#e0e0e0" stroke-width="1" stroke-dasharray="3,3"/>
-    <line x1="${padL}" y1="${padT + chartH}" x2="${W - padR}" y2="${padT + chartH}"
-          stroke="#e0e0e0" stroke-width="1"/>
-
-    <text x="${padL - 4}" y="${yTop}"
-          text-anchor="end" font-size="9" fill="#999">${maxT.toFixed(1)}</text>
-    <text x="${padL - 4}" y="${yMid}"
-          text-anchor="end" font-size="9" fill="#999">${tMid}</text>
-    <text x="${padL - 4}" y="${yBottom}"
-          text-anchor="end" font-size="9" fill="#999">${minT.toFixed(1)}</text>
-
-    <text x="${padL}" y="${H - 2}"
-          text-anchor="middle" font-size="9" fill="#999">${firstSlot}</text>
-    <text x="${W - padR}" y="${H - 2}"
-          text-anchor="middle" font-size="9" fill="#999">${lastSlot}</text>
-
-    <polyline points="${points}"
-              fill="none" stroke="#4CAF50" stroke-width="2"
-              stroke-linejoin="round" stroke-linecap="round"/>
-
-    ${arr.map((e, i) => {
-      const x = padL + i * xStep;
-      const y = padT + chartH - ((e.temperature - minT) / rangeT) * chartH;
-      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="#4CAF50"/>`;
-    }).join('')}
-  </svg>`;
+  <div id="chart-${name}" style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 14px;border:0.5px solid var(--color-border-tertiary);display:flex;flex-direction:column;min-width:260px;justify-content:center;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <span id="chart-label-${name}" style="font-size:11px;color:var(--color-text-secondary);">Temp °C — last 24h</span>
+      <div style="display:flex;gap:4px;">
+        ${hastemp ? `<button onclick="switchChart('${name}','temp')" id="btn-temp-${name}"
+          style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #4CAF50;background:#4CAF50;color:white;cursor:pointer;">Temp</button>` : ''}
+        ${haspower ? `<button onclick="switchChart('${name}','power')" id="btn-power-${name}"
+          style="font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #ccc;background:transparent;color:var(--color-text-secondary);cursor:pointer;">Power</button>` : ''}
+      </div>
+    </div>
+    <div id="chart-temp-${name}">${tempSVG}</div>
+    <div id="chart-power-${name}" style="display:none;">${powerSVG}</div>
+  </div>`;
 }
 
 function renderRow(name) {
@@ -149,11 +172,6 @@ function renderRow(name) {
   const checked    = relay === true ? 'checked' : '';
   const pending    = pendingCommands[name]
     ? `<span class="pending">Pending: turn ${pendingCommands[name]}...</span>` : '';
-
-  const chart = d.temperature != null ? renderChart(name) : '';
-  const chartBlock = chart
-    ? `<div class="chart-card"><div class="label">Temp °C — last hour</div>${chart}</div>`
-    : '';
 
   return `
   <div class="device-row">
@@ -188,7 +206,7 @@ function renderRow(name) {
       </div>
     </div>
 
-    ${chartBlock}
+    ${renderChart(name)}
 
     <div class="timestamp">${time}</div>
   </div>`;
@@ -211,7 +229,7 @@ app.get('/', (req, res) => {
   <title>Shelly Dashboard</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; color: #222; }
+    body { font-family: sans-serif; max-width: 1200px; margin: 40px auto; padding: 0 20px; color: #222; }
     h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 0.4rem; }
     .subtitle { font-size: 0.85rem; color: #999; margin-bottom: 2rem; }
 
@@ -219,7 +237,7 @@ app.get('/', (req, res) => {
       display: flex;
       align-items: stretch;
       gap: 16px;
-      margin-bottom: 16px;
+      margin-bottom: 12px;
       flex-wrap: wrap;
     }
     .device-row + .device-row {
@@ -255,6 +273,7 @@ app.get('/', (req, res) => {
       grid-template-columns: repeat(4, 1fr);
       gap: 12px;
       flex: 1;
+      min-width: 260px;
     }
     .card {
       background: #f5f5f5;
@@ -264,23 +283,14 @@ app.get('/', (req, res) => {
       flex-direction: column;
       justify-content: center;
     }
-    .chart-card {
-      background: #f5f5f5;
-      border-radius: 10px;
-      padding: 12px 14px;
-      min-width: 260px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    }
-    .label { font-size: 0.75rem; color: #666; margin-bottom: 4px; }
+    .label { font-size: 0.75rem; color: #666; margin-bottom: 2px; }
     .value { font-size: 1.6rem; font-weight: 600; line-height: 1.1; }
     .unit  { font-size: 0.8rem; color: #888; margin-left: 2px; }
 
     .timestamp {
       font-size: 0.72rem;
       color: #bbb;
-      min-width: 100px;
+      min-width: 90px;
       display: flex;
       align-items: center;
     }
@@ -298,7 +308,6 @@ app.get('/', (req, res) => {
     @media (max-width: 600px) {
       .tiles { grid-template-columns: repeat(2, 1fr); }
       .timestamp { display: none; }
-      .chart-card { min-width: 100%; }
     }
   </style>
 </head>
@@ -311,6 +320,28 @@ app.get('/', (req, res) => {
   <p class="footer">Page last rendered: ${new Date().toLocaleString()}</p>
 
   <script>
+    function switchChart(name, type) {
+      const tempDiv   = document.getElementById('chart-temp-'  + name);
+      const powerDiv  = document.getElementById('chart-power-' + name);
+      const btnTemp   = document.getElementById('btn-temp-'    + name);
+      const btnPower  = document.getElementById('btn-power-'   + name);
+      const label     = document.getElementById('chart-label-' + name);
+
+      if (type === 'temp') {
+        tempDiv.style.display  = '';
+        powerDiv.style.display = 'none';
+        if (btnTemp)  { btnTemp.style.background  = '#4CAF50'; btnTemp.style.color  = 'white'; btnTemp.style.borderColor  = '#4CAF50'; }
+        if (btnPower) { btnPower.style.background = 'transparent'; btnPower.style.color = 'var(--color-text-secondary,#666)'; btnPower.style.borderColor = '#ccc'; }
+        if (label) label.textContent = 'Temp \u00b0C \u2014 last 24h';
+      } else {
+        tempDiv.style.display  = 'none';
+        powerDiv.style.display = '';
+        if (btnPower) { btnPower.style.background = '#2196F3'; btnPower.style.color = 'white'; btnPower.style.borderColor = '#2196F3'; }
+        if (btnTemp)  { btnTemp.style.background  = 'transparent'; btnTemp.style.color = 'var(--color-text-secondary,#666)'; btnTemp.style.borderColor  = '#ccc'; }
+        if (label) label.textContent = 'Power W \u2014 last 24h';
+      }
+    }
+
     function sendCommand(name, isOn) {
       fetch('/command/' + name, {
         method: 'POST',
@@ -319,7 +350,7 @@ app.get('/', (req, res) => {
       }).then(r => r.json()).then(d => {
         if (d.ok) {
           document.querySelector('.footer').textContent =
-            'Command sent to ' + name + ' — Shelly will update within 60s';
+            'Command sent to ' + name + ' \u2014 Shelly will update within 60s';
         }
       });
     }
