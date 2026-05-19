@@ -27,11 +27,18 @@ function nowET() {
 }
 
 function updateHistory(name, temperature, power) {
-  if (temperature == null && power == null) return;
+  if (temperature === undefined && power === undefined) return;
   if (!history[name]) history[name] = [];
 
+  const now  = Date.now();
   const slot = get5minSlot(new Date());
   const arr  = history[name];
+
+  // Prune entries older than 24 hours
+  const cutoff = now - 24 * 60 * 60 * 1000;
+  while (arr.length > 0 && arr[0].ts < cutoff) {
+    arr.shift();
+  }
 
   const existing = arr.find(e => e.slot === slot);
   if (existing) {
@@ -45,13 +52,13 @@ function updateHistory(name, temperature, power) {
     }
   } else {
     arr.push({
+      ts:            now,
       slot,
       tempReadings:  temperature != null ? [temperature] : [],
-      temperature:   temperature,
+      temperature:   temperature != null ? temperature : null,
       powerReadings: power != null ? [power] : [],
-      power:         power
+      power:         power != null ? power : null
     });
-    if (arr.length > 288) arr.shift();
   }
 }
 
